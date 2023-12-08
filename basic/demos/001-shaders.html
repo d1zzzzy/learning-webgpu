@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport"
+				content="width=device-width, user-scalable=no, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0">
+	<meta http-equiv="X-UA-Compatible" content="ie=edge">
+	<title>着色器</title>
+</head>
+<body>
+	<div>
+		<canvas id="vertex"></canvas>
+		<p>顶点着色器与片元着色器</p>
+	</div>
+
+	<div>
+		<canvas id="compute"></canvas>
+		<p>计算着色器</p>
+	</div>
+
+	<script src="../../common/utils.js"></script>
+	<script>
+		(function () {
+			async function init () {
+				if (!navigator.gpu) {
+					throw new Error('WebGPU is not supported');
+				}
+
+				const adapter = await navigator.gpu.requestAdapter();
+
+				if (!adapter) {
+					throw new Error('Adapter is null');
+				}
+
+				const canvas = document.querySelector('#vertex');
+				const context = canvas.getContext('webgpu');
+				const presentationFormat = navigator.gpu.getPreferredCanvasFormat();
+				const device = await adapter.requestDevice();
+
+				context.configure({
+					device,
+					format: presentationFormat
+				});
+
+				// createShaderModule(code, hints)
+				// 根据 WGSL 代码字符串创建着色器模块
+				const module = device.createShaderModule({
+					label: 'out hardcoded red triangle shaders',
+					code: `
+					// 将该函数声明为渲染管道的顶点着色器阶段的入口点。
+					@vertex fn vs(
+					// @builtin 必须是内置值的枚举。
+						@builtin(vertex_index) vertexIndex : u32
+					) -> @builtin(position) vec4f {
+						let pos = array(
+							vec2f(0.0, 0.5),
+							vec2f(-0.5, -0.5),
+							vec2f(0.5, -0.5)
+						);
+
+						return vec4f(pos[vertexIndex], 0.0, 1.0);
+					}
+
+					// 将该函数声明为渲染管道的片段着色器阶段的入口点。
+					@fragment fn fs() -> @location(0) vec4f {
+						return vec4f(1.0, 0.0, 0.0, 1.0);
+					}
+				`
+				})
+
+				const pipe = device.createRenderPipeline({
+					label: 'out hardcoded red triangle pipeline',
+					layout: 'auto',
+					vertex: {
+						module,
+						entryPoint: 'vs'
+					},
+					fragment: {
+						module,
+						entryPoint: 'fs',
+						targets: [{ format: presentationFormat }],
+					}
+				});
+
+				const renderPassDescriptor = {
+					label: 'our basic canvas renderPass',
+					colorAttachments: [
+						{
+							// view: <- to be filled out when render
+							clearValue: [0.3, 0.3, 0.3, 1], // 指定在绘制前将纹理清除为clearValue
+							loadOp: 'clear', // 将纹理的现有内容加载到 GPU 中
+							storeOp: 'store', // 存储绘制结果
+						}
+					]
+				};
+
+				renderPassDescriptor.colorAttachments[0].view = context.getCurrentTexture().createView();
+
+				const encoder = device.createCommandEncoder({ label: 'out encoder' });
+				const pass = encoder.beginRenderPass(renderPassDescriptor);
+
+				pass.setPipeline(pipe);
+				pass.draw(3);
+				pass.end();
+
+				const commandBuffer = encoder.finish();
+				device.queue.submit([commandBuffer]);
+			}
+
+			init();
+		})()
+	</script>
+
+	<script>
+		async function render() {
+			const device = await getDevice();
+
+			const module = device.createShaderModule({
+				label: 'doubling compute module',
+				code: `
+					@group(0) @binding(0) var<storage, read_write> data: array<f32>;
+
+					@compute @workgroup_size(1) fn computeSomething(
+						@builtin(global_invocation_id) id: vec3<u32>
+					) {
+						let i =id.x;
+						data[i] = data[i] * 2.0;
+					}
+				`
+			});
+
+			const pipeline = device.createComputePipeline({
+				label: 'doubling compute pipeline',
+				layout: 'auto',
+				compute: {
+					module,
+					entryPoint: 'computeSomething'
+				}
+			});
+
+			const input = new Float32Array([1, 3, 5]);
+
+			const workBuffer = device.createBuffer({
+				label: 'work buffer',
+				size: input.byteLength,
+				usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
+			});
+
+			device.queue.writeBuffer(workBuffer, 0, input);
+
+			// create a buffer on the GPU to get a copy of the results
+			const resultBuffer = device.createBuffer({
+				label: 'result buffer',
+				size: input.byteLength,
+				usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+			});
+
+			const bindGroup = device.createBindGroup({
+				label: 'bind group for work buffer',
+				layout: pipeline.getBindGroupLayout(0),
+				entries: [{ binding: 0, resource: { buffer: workBuffer } }]
+			});
+
+			const encoder = device.createCommandEncoder({
+				label: 'doubling encoder',
+			});
+
+			const pass = encoder.beginComputePass({
+				label: 'doubling compute pass',
+			});
+
+			pass.setPipeline(pipeline);
+			pass.setBindGroup(0, bindGroup);
+			pass.dispatchWorkgroups(input.length);
+			pass.end();
+
+			encoder.copyBufferToBuffer(workBuffer, 0, resultBuffer, 0, resultBuffer.size);
+
+			const commandBuffer = encoder.finish();
+			device.queue.submit([commandBuffer]);
+
+			await resultBuffer.mapAsync(GPUMapMode.READ);
+			const result = new Float32Array(resultBuffer.getMappedRange());
+
+			console.log('input', input);
+			console.log('result', result);
+
+			resultBuffer.unmap();
+		}
+
+		render();
+	</script>
+</body>
+</html>
