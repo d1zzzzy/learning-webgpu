@@ -2,6 +2,6 @@
 
 ## 翻译
 
-1. [WebGPU Shading Language](/translation/wgsl/README.md)
+1. [WebGPU Shading Language](/translation/wgsl/)
 
 
