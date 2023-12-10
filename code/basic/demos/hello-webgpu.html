@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Hello WebGPU</title>
+</head>
+<body>
+	<canvas></canvas>
+	<script>
+		// 判断是否支持WebGPU
+		if (navigator.gpu) {
+			console.log('WebGPU is supported!');
+		} else {
+			console.log('WebGPU is not supported!');
+		}
+
+    async function getAdapter() {
+      return await navigator.gpu.requestAdapter();
+    }
+
+    getAdapter().then((adapter) => {
+			console.log(adapter);
+
+      // adapter.requestAdapterInfo().then((info) => {
+			// 	console.log(info);
+			// });
+      
+      // features 一个 GPUSupportedFeatures 对象，其描述了适配器支持的额外的功能。
+        /**
+         * 并非所有功能都可在所有支持 WebGPU 的浏览器中使用，即使底层硬件支持这些功能。这可能是由于底层系统、浏览器或适配器的限制造成的。例如：
+         *
+         * + 底层系统可能无法保证以与特定浏览器兼容的方式公开某个功能。
+         * + 浏览器供应商可能还没有找到一种安全的方法来实现对该功能的支持，或者可能只是还没有抽出时间来实现。
+         */
+      // limits 一个 GPUSupportedLimits 对象，其描述了适配器支持的额外的限制。
+		      // 浏览器可能会报告不同限制的不同层值，而不是报告每个 GPU 的确切限制，以减少可用于路过指纹识别的独特信息。例如，某个限制的等级可能是 2048、8192 和 32768。如果您的 GPU 的实际限制是 16384，则浏览器仍会报告 8192。
+	    // isFallbackAdapter 一个布尔值，其表示适配器是否是一个备用适配器。
+	    
+	    adapter.requestDevice().then((device) => {
+        console.log(device);
+        
+        if (!device) {
+					console.log('device is null');
+					return;
+				}
+        
+        // 创建画布，获取上下文
+        const canvas = document.querySelector('canvas');
+        // https://gpuweb.github.io/gpuweb/#canvas-rendering
+        const context = canvas.getContext('webgpu');
+        
+        // 返回用于当前系统上显示 8 位色深、标准动态范围（SDR）内容的最佳 canvas 纹理格式。
+		    const presentationFormat = navigator.gpu.getPreferredCanvasFormat();
+        
+        context.configure({
+		        device,
+		        format: presentationFormat,
+        });
+        
+        const module = device.createShaderModule({
+	        label: 'my-shader',
+		        code: `
+		          @vertex fn vs(
+		            @builtin(vertex_index) vertexIndex: u32,
+		          ) -> @builtin(position) vec4f {
+		            let pos = array(
+									vec2(0.0, 0.5),
+		              vec2(-0.5, -0.5),
+		              vec2(0.5, -0.5),
+		            );
+		            
+		            return vec4f(pos[vertexIndex], 0.0, 1.0);
+		          }
+		          
+		          @fragment fn fs() -> @location(0) vec4f {
+		            return vec4f(1.0, 0.0, 0.0, 1.0);
+		          }
+		        `
+        });
+        
+        const pipeline = device.createRenderPipeline({
+		        label: 'my-pipeline',
+		        layout: 'auto',
+		        vertex: {
+		          module,
+			        entryPoint: 'vs',
+		        },
+		        fragment: {
+              module,
+			        entryPoint: 'fs',
+			        targets: [
+			          {
+			            format: presentationFormat,
+			          },
+			        ],
+		        }
+        });
+        
+        const renderPassDescriptor = {
+		        colorAttachments: [
+		          {
+                // view: <- to be filled out when we render
+		            loadValue: { r: 0.3, g: 0.3, b: 0.3, a: 1.0 },
+			          loadOp: 'clear',
+		            storeOp: 'store',
+		          },
+		        ],
+				};
+        
+        renderPassDescriptor.colorAttachments[0].view = context.getCurrentTexture().createView();
+        
+        const encoder = device.createCommandEncoder({ label: 'my encoder' });
+        
+        const pass = encoder.beginRenderPass(renderPassDescriptor);
+        pass.setPipeline(pipeline);
+        pass.draw(3);
+        pass.end();
+        
+        const commandBuffer = encoder.finish();
+        device.queue.submit([commandBuffer]);
+      });
+		});
+	</script>
+</body>
+</html>
