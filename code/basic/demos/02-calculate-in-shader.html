@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<title>在 GPU 上进行计算</title>
+	<style>
+      html,
+      body {
+          margin: 0; /* remove the default margin          */
+          height: 100%; /* make the html,body fill the page   */
+      }
+      canvas {
+          display: block; /* make the canvas act like a block   */
+          width: 100%; /* make the canvas fill its container */
+          height: 100%;
+      }
+	</style>
+</head>
+<body>
+	<canvas></canvas>
+
+	<script>
+		async function main() {
+			if (!navigator.gpu) {
+				console.log('WebGPU is not supported!');
+				return;
+			}
+
+			async function getAdapter() {
+				return await navigator.gpu.requestAdapter();
+			}
+
+			const adapter = await getAdapter();
+
+			if (!adapter) {
+				console.log('adapter is null');
+				return;
+			}
+
+			async function getDevice() {
+				return await adapter.requestDevice();
+			}
+
+			const device = await getDevice();
+
+			const canvas = document.querySelector('canvas');
+			const context = canvas.getContext('webgpu');
+
+			const presentationFormat = navigator.gpu.getPreferredCanvasFormat();
+
+			context.configure({
+				device,
+				format: presentationFormat,
+			});
+
+			const shaders = `
+				@vertex fn vs(
+					@builtin(vertex_index) vertexIndex: u32,
+				) -> @builtin(position) vec4f {
+					let pos = array(
+						vec2f(0.0, 0.0),
+						vec2f(0.0, 2.0),
+						vec2f(2.0, 2.0),
+
+						vec2f(0.0, 0.0),
+						vec2f(0.0, 2.0),
+						vec2f(-2.0, 2.0),
+					);
+
+					return vec4f(pos[vertexIndex], 0.0, 1.0);
+				}
+
+				@fragment fn fs() -> @location(0) vec4f {
+					return vec4f(1.0, 0.0, 0.0, 1.0);
+				}
+			`;
+
+			const calculateModule = device.createShaderModule({
+				label: 'calculate module',
+				code: `
+					@group(0) @binding(0) var<storage, read_write> data: array<f32>;
+
+					@compute @workgroup_size(1) fn compute(
+						@builtin(global_invocation_id) id: vec3<u32>
+					) {
+						let i =id.x;
+
+						data[i] = data[i] * 2.0;
+					}
+				`
+			})
+
+			const module = device.createShaderModule({
+				label: 'my shader',
+
+				code: shaders,
+			});
+
+			const pipeline = device.createRenderPipeline({
+				label: 'my pipeline',
+
+				layout: 'auto',
+
+				vertex: {
+					module,
+					entryPoint: 'vs',
+				},
+
+				fragment: {
+					module,
+					entryPoint: 'fs',
+					targets: [{
+						format: presentationFormat,
+					}]
+				},
+			});
+
+			const calculatePipeline = device.createComputePipeline({
+				label: 'doubling compute pipeline',
+				layout: 'auto',
+				compute: {
+					module: calculateModule,
+					entryPoint: 'compute',
+				}
+			})
+
+			const renderPassDescriptor = {
+				colorAttachments: [{
+					clearValue: [0.0, 0.3, 1.0, 1.0],
+					loadOp: 'clear',
+					storeOp: 'store',
+				}]
+			};
+
+			async function render() {
+				renderPassDescriptor.colorAttachments[0].view = context.getCurrentTexture().createView();
+
+				const input = new Float32Array([1, 3, 5]);
+				const workBuffer = device.createBuffer({
+					label: 'work buffer',
+					size: input.byteLength,
+					usage: GPUBufferUsage.STORAGE |
+						GPUBufferUsage.COPY_DST |
+						GPUBufferUsage.COPY_SRC,
+				});
+
+				device.queue.writeBuffer(workBuffer, 0, input);
+
+				const resultBuffer = device.createBuffer({
+					label: 'result buffer',
+					size: input.byteLength,
+					usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+				});
+
+				const bindGroup = device.createBindGroup({
+					label: 'bindGroup for work buffer',
+					layout: calculatePipeline.getBindGroupLayout(0),
+					entries: [{
+						binding: 0,
+						resource: {
+							buffer: workBuffer,
+						},
+					}],
+				});
+
+				const encoder = device.createCommandEncoder();
+				const doubleEncoder = device.createCommandEncoder({
+					label: 'doubling encoder'
+				});
+				const pass = encoder.beginRenderPass(renderPassDescriptor);
+				const doublePass = doubleEncoder.beginComputePass({
+					label: 'double pass',
+				});
+				pass.setPipeline(pipeline);
+				doublePass.setPipeline(calculatePipeline);
+				doublePass.setBindGroup(0, bindGroup);
+				pass.draw(6);
+				doublePass.dispatchWorkgroups(input.length);
+				pass.end();
+				doublePass.end();
+
+				doubleEncoder.copyBufferToBuffer(workBuffer, 0, resultBuffer, 0, resultBuffer.size);
+
+				const commandBuffer = encoder.finish();
+				const otherCommandBuffer = doubleEncoder.finish();
+				device.queue.submit([commandBuffer, otherCommandBuffer]);
+
+				await resultBuffer.mapAsync(GPUMapMode.READ);
+
+				const result = new Float32Array(resultBuffer.getMappedRange().slice());
+				resultBuffer.unmap();
+
+				console.log('input', input);
+				console.log('result', result);
+			}
+
+			// 观察浏览器尺寸resize
+			const observer  = new ResizeObserver(entries => {
+				for (const entry of entries) {
+					const canvas = entry.target;
+					const width = entry.contentBoxSize[0].inlineSize;
+					const height = entry.contentBoxSize[0].blockSize;
+
+					canvas.width = Math.max(1, Math.min(width, device.limits.maxTextureDimension2D));
+					canvas.height = Math.max(1, Math.min(height, device.limits.maxTextureDimension2D));
+				}
+
+				render();
+			});
+
+			observer.observe(canvas);
+		}
+
+		main();
+	</script>
+</body>
+</html>

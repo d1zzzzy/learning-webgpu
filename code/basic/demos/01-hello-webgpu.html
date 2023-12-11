@@ -17,14 +17,15 @@
     async function getAdapter() {
       return await navigator.gpu.requestAdapter();
     }
-
+		// 光栅化
+		//  The process of finding all the pixels in an image that are occupied by a geometric primitive is called rasterization;
+		//  即光栅化就是找到所有被几何原型所占据的所有像素点（找到这些像素点之后再进行逐个渲染）。
+		//  其中三角形就是最常用的geometric primitive
     getAdapter().then((adapter) => {
-			console.log(adapter);
-
       // adapter.requestAdapterInfo().then((info) => {
 			// 	console.log(info);
 			// });
-      
+
       // features 一个 GPUSupportedFeatures 对象，其描述了适配器支持的额外的功能。
         /**
          * 并非所有功能都可在所有支持 WebGPU 的浏览器中使用，即使底层硬件支持这些功能。这可能是由于底层系统、浏览器或适配器的限制造成的。例如：
@@ -35,28 +36,28 @@
       // limits 一个 GPUSupportedLimits 对象，其描述了适配器支持的额外的限制。
 		      // 浏览器可能会报告不同限制的不同层值，而不是报告每个 GPU 的确切限制，以减少可用于路过指纹识别的独特信息。例如，某个限制的等级可能是 2048、8192 和 32768。如果您的 GPU 的实际限制是 16384，则浏览器仍会报告 8192。
 	    // isFallbackAdapter 一个布尔值，其表示适配器是否是一个备用适配器。
-	    
+
 	    adapter.requestDevice().then((device) => {
         console.log(device);
-        
+
         if (!device) {
 					console.log('device is null');
 					return;
 				}
-        
+
         // 创建画布，获取上下文
         const canvas = document.querySelector('canvas');
         // https://gpuweb.github.io/gpuweb/#canvas-rendering
         const context = canvas.getContext('webgpu');
-        
+
         // 返回用于当前系统上显示 8 位色深、标准动态范围（SDR）内容的最佳 canvas 纹理格式。
 		    const presentationFormat = navigator.gpu.getPreferredCanvasFormat();
-        
+
         context.configure({
-		        device,
-		        format: presentationFormat,
+					device,
+					format: presentationFormat,
         });
-        
+
         const module = device.createShaderModule({
 	        label: 'my-shader',
 		        code: `
@@ -64,58 +65,79 @@
 		            @builtin(vertex_index) vertexIndex: u32,
 		          ) -> @builtin(position) vec4f {
 		            let pos = array(
-									vec2(0.0, 0.5),
-		              vec2(-0.5, -0.5),
-		              vec2(0.5, -0.5),
+									vec2f(-0.5,  0.5),
+									vec2f( 0.5,  0.5),
+									vec2f(-0.5, -0.5),
+
+									vec2f( 0.5, -0.5),
+									vec2f( -0.5, 0.5),
+									vec2f( 0.5,  0.5),
 		            );
-		            
+
 		            return vec4f(pos[vertexIndex], 0.0, 1.0);
 		          }
-		          
+
 		          @fragment fn fs() -> @location(0) vec4f {
 		            return vec4f(1.0, 0.0, 0.0, 1.0);
 		          }
 		        `
         });
-        
+
         const pipeline = device.createRenderPipeline({
-		        label: 'my-pipeline',
-		        layout: 'auto',
-		        vertex: {
-		          module,
-			        entryPoint: 'vs',
-		        },
-		        fragment: {
-              module,
-			        entryPoint: 'fs',
-			        targets: [
-			          {
-			            format: presentationFormat,
-			          },
-			        ],
-		        }
+					label: 'my-pipeline',
+					layout: 'auto',
+
+					// 顶点着色器
+					vertex: {
+						module,
+						entryPoint: 'vs',
+					},
+
+					// 片段着色器
+					fragment: {
+						module,
+						entryPoint: 'fs',
+						targets: [
+							{
+								format: presentationFormat,
+							},
+						],
+					}
         });
-        
+
+		    const encoder = device.createCommandEncoder({ label: 'my encoder' });
+
         const renderPassDescriptor = {
-		        colorAttachments: [
-		          {
-                // view: <- to be filled out when we render
-		            loadValue: { r: 0.3, g: 0.3, b: 0.3, a: 1.0 },
-			          loadOp: 'clear',
-		            storeOp: 'store',
-		          },
-		        ],
+					colorAttachments: [
+						{
+							// view: <- to be filled out when we render
+							// clearValue view在执行渲染通道之前清除纹理的颜色值。loadOp如果未设置为 ，则忽略该值"clear"。clearValue接受一个数组或对象，将四个颜色分量r、g、b和表示a为小数。
+							clearValue: [0.0, 0.5, 1.0, 1.0],
+							// loadOp
+							// view一个枚举值，指示在执行渲染通道之前要执行的加载操作。可能的值为：
+							// 		"clear"：clearValue将此附件加载到渲染通道中。
+							// 		"load"：将此附件的现有值加载到渲染通道中
+							loadOp: 'clear',
+							// storeOp
+							// view一个枚举值，指示执行渲染通道后要执行的存储操作。可能的值为：
+							//
+							// 		"discard"：丢弃此附件的渲染通道的结果值。
+							// 		"store"：存储此附件的渲染通道的结果值。
+							storeOp: 'store',
+						},
+					],
 				};
-        
+
         renderPassDescriptor.colorAttachments[0].view = context.getCurrentTexture().createView();
-        
-        const encoder = device.createCommandEncoder({ label: 'my encoder' });
-        
+
+				// 开始对渲染通道进行编码
         const pass = encoder.beginRenderPass(renderPassDescriptor);
+				// 用于此渲染通道的
         pass.setPipeline(pipeline);
-        pass.draw(3);
+				// 根据 提供的顶点缓冲区绘制图元
+        pass.draw(6);
         pass.end();
-        
+
         const commandBuffer = encoder.finish();
         device.queue.submit([commandBuffer]);
       });

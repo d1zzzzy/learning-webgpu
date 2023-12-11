@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<title>Inter-Stage</title>
+  <style>
+    html,
+    body {
+      margin: 0; /* remove the default margin          */
+      height: 100%; /* make the html,body fill the page   */
+    }
+    canvas {
+      display: block; /* make the canvas act like a block   */
+      width: 100%; /* make the canvas fill its container */
+      height: 100%;
+    }
+  </style>
+</head>
+<body>
+  <canvas></canvas>
+
+  <script>
+    async function getDevice() {
+      if (!navigator.gpu) {
+        return null;
+      }
+
+      const adapter = await navigator.gpu.requestAdapter();
+
+      if (!adapter) {
+        return null;
+      }
+
+      return await adapter.requestDevice();
+    }
+    async function main() {
+      const device = await getDevice();
+
+      if (!device) {
+        console.log('your browser not support gpu');
+      }
+
+      const canvas = document.querySelector('canvas');
+      const context = canvas.getContext('webgpu');
+
+      const presentationFormation = navigator.gpu.getPreferredCanvasFormat();
+      context.configure({
+        device,
+        format: presentationFormation,
+      });
+
+      // 在顶点着色器中，@builtin(position) 是 GPU 绘制三角形/线/点所需的输出。
+      // 在片段着色器中，@builtin(position) 是一个输入。它是片段着色器当前被要求计算颜色的像素坐标。
+      const vsModule = device.createShaderModule({
+        label: 'vs module',
+        code: `
+          struct VertexOutput {
+            @builtin(position) position: vec4f,
+          };
+
+          @vertex fn vs(
+            @builtin(vertex_index) vertexIndex: u32
+          ) -> VertexOutput {
+            let pos = array(
+              vec2f(0.0, 0.5),
+              vec2f(-0.5, -0.5),
+              vec2f(0.5, -0.5),
+            );
+
+            var vsOutput: VertexOutput;
+
+            vsOutput.position = vec4f(pos[vertexIndex], 0.0, 1.0);
+
+            return vsOutput;
+          }
+        `
+      })
+
+      const fsModule = device.createShaderModule({
+        label: 'fs module',
+        code: `
+          @fragment fn fs(@builtin(position) pixelPosition: vec4f) -> @location(0) vec4f {
+            let red = vec4f(1, 0, 0, 1);
+            let cyan = vec4f(0, 1, 1, 1);
+
+            let grid = vec2u(pixelPosition.xy) / 8;
+            let checker = (grid.x + grid.y) % 2 == 1;
+
+            return select(red, cyan, checker);
+          }
+        `
+      });
+
+      const pipeline = device.createRenderPipeline({
+        label: 'pipeline',
+
+        layout: 'auto',
+
+        vertex: {
+          module: vsModule,
+          entryPoint: 'vs',
+        },
+
+        fragment: {
+          module: fsModule,
+          entryPoint: 'fs',
+          targets: [{ format: presentationFormation }]
+        }
+      });
+
+      const renderPassDescriptor = {
+        colorAttachments: [{
+          clearValue: [0.0, 0.3, 1.0, 1.0],
+          loadOp: 'clear',
+          storeOp: 'store',
+        }]
+      };
+
+      function render() {
+        renderPassDescriptor.colorAttachments[0].view = context.getCurrentTexture().createView();
+
+        const encoder = device.createCommandEncoder({
+          label: 'encoder'
+        });
+
+        const pass = encoder.beginRenderPass(renderPassDescriptor);
+        pass.setPipeline(pipeline);
+        pass.draw(3);
+        pass.end();
+
+        const commandBuffer = encoder.finish();
+
+        device.queue.submit([commandBuffer]);
+      }
+
+      const observer = new ResizeObserver((entries) => {
+        for (const entry of entries) {
+          const canvas = entry.target;
+          const width = entry.contentBoxSize[0].inlineSize;
+          const height = entry.contentBoxSize[0].blockSize;
+
+          canvas.width = Math.max(1, Math.min(width, device.limits.maxTextureDimension2D));
+          canvas.height = Math.max(1, Math.min(height, device.limits.maxTextureDimension2D));
+        }
+
+        render();
+      })
+
+      observer.observe(canvas);
+    }
+
+    main();
+  </script>
+</body>
+</html>
