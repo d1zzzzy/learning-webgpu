@@ -34,12 +34,12 @@
 <canvas />
 ```
 
-> 小知识点: [画布的最大的尺寸/Maximum size of a <canvas> element](https://stackoverflow.
-> com/questions/6081483/maximum-size-of-a-canvas-element)
+> 小知识点: [画布的最大的尺寸](https://stackoverflow.com/questions/6081483/maximum-size-of-a-canvas-element)
 
 需要判断当前环境是否支持 `webgpu`
    + `navigator.gpu` 是否存在
    + `navigator.gpu.requestAdapter()` 是否存在
+
 ```javascript
 // 抽出一个方法 getDevice
 // 如果抛出异常则不支持 webgpu
@@ -80,6 +80,8 @@ context.configure({
 需要注意的是这里的 `context` 是 [GPUCanvasContext](https://developer.mozilla.org/zh-CN/docs/Web/API/GPUCanvasContext)，并且通过 
 [configure](https://developer.mozilla.org/zh-CN/docs/Web/API/GPUCanvasContext/configure) 方法使用给定的 `GPUDevice` 配置渲染上下文并清除 `canvas` 为透明的黑色。
 
+### Shader
+
 在设置完画布之后，接下来就是 `shader` 的编写:
 
 ```javascript
@@ -115,6 +117,8 @@ const module = device.createShaderModule({
 中的修饰符。
 
 后续需要通过 `GPUDevice` 的 [createRenderPipeline](https://developer.mozilla.org/en-US/docs/Web/API/GPUDevice/createRenderPipeline) 方法来控制顶点和片段着色器阶段并在 `GPURenderPassEncoder` 或 `GPURenderBundleEncoder` 中使用。
+
+### 绘制
 
 ```javascript
 const pipeline = device.createRenderPipeline({
